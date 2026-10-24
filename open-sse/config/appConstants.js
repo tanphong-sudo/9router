@@ -251,3 +251,6 @@ export function buildKimiHeaders(deviceId) {
     "X-Msh-Device-Id": resolvedId,
   };
 }
+
+// Codex seeds newly delegated sessions with an unpaired tool result.
+export const CODEX_DELEGATION_PREFIX = "<codex_delegation>";

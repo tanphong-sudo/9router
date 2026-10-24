@@ -3,6 +3,8 @@ import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { getModelTargetFormat } from "../config/providerModels.js";
 import { FORMATS } from "../translator/formats.js";
+import { ROLE, RESPONSES_ITEM } from "../translator/schema/index.js";
+import { CODEX_DELEGATION_PREFIX } from "../config/appConstants.js";
 import {
   normalizeResponsesInput,
   clampResponsesCallId,
@@ -45,6 +47,26 @@ function translatedSession(sessionId, clientTool) {
 // including the family-regex fallback for passthrough ids — never hardcode model ids here.
 function isResponsesModel(model) {
   return getModelTargetFormat("opencode-go", model) === FORMATS.OPENAI_RESPONSES;
+}
+
+function normalizeCodexDelegation(body) {
+  if (body.previous_response_id || !Array.isArray(body.input)) return;
+  const calls = new Set(body.input
+    .filter((item) => item?.type === RESPONSES_ITEM.FUNCTION_CALL)
+    .map((item) => item.call_id));
+  body.input = body.input.map((item) => {
+    // This result originates in a different Codex session, so its call is absent
+    // here. Preserve the assignment as user input instead of an invalid result.
+    if (item?.type !== RESPONSES_ITEM.FUNCTION_CALL_OUTPUT
+      || calls.has(item.call_id)
+      || typeof item.output !== "string"
+      || !item.output.trimStart().startsWith(CODEX_DELEGATION_PREFIX)) return item;
+    return {
+      type: RESPONSES_ITEM.MESSAGE,
+      role: ROLE.USER,
+      content: [{ type: RESPONSES_ITEM.INPUT_TEXT, text: item.output }],
+    };
+  });
 }
 
 // Flatten Chat Completions tool declarations into the Responses flat shape and
@@ -157,6 +179,10 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const out = super.transformRequest(model, body);
+    if (credentials?.runtimeTransport?.format === FORMATS.OPENAI_RESPONSES
+      || isResponsesModel(model || body?.model)) {
+      normalizeCodexDelegation(out);
+    }
     if (!isResponsesModel(model || body?.model)) return out;
     const normalized = normalizeResponsesInput(out.input);
     if (normalized) out.input = normalized;
